@@ -59,8 +59,8 @@ export async function POST(request: NextRequest) {
 
   const { points, author_color, stroke_width } = body as Record<string, unknown>;
 
-  if (!Array.isArray(points) || points.length < 2 || points.length > 10000) {
-    return NextResponse.json({ error: "points must be an array of 2-10000 items" }, { status: 400 });
+  if (!Array.isArray(points) || points.length < 2 || points.length > 2000) {
+    return NextResponse.json({ error: "points must be an array of 2-2000 items" }, { status: 400 });
   }
   for (const pt of points) {
     if (

@@ -18,6 +18,7 @@ interface InfiniteCanvasProps {
 }
 
 const FETCH_BUFFER = 500;
+const TOOLBAR_HEIGHT = 56;
 
 export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -121,8 +122,7 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
     const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     if (!supabaseUrl || !supabaseKey) return;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let channel: any;
+    let channel: import("@supabase/supabase-js").RealtimeChannel | undefined;
 
     async function setupRealtime() {
       try {
@@ -133,22 +133,20 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
           .on(
             "postgres_changes",
             { event: "INSERT", schema: "public", table: "messages" },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (payload: any) => {
+            (payload: { new: Record<string, unknown> }) => {
               setMessages((prev) => {
                 if (prev.find((m) => m.id === payload.new.id)) return prev;
-                return [payload.new as Message, ...prev];
+                return [payload.new as unknown as Message, ...prev];
               });
             }
           )
           .on(
             "postgres_changes",
             { event: "INSERT", schema: "public", table: "strokes" },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (payload: any) => {
+            (payload: { new: Record<string, unknown> }) => {
               setStrokes((prev) => {
                 if (prev.find((s) => s.id === payload.new.id)) return prev;
-                return [payload.new as Stroke, ...prev];
+                return [payload.new as unknown as Stroke, ...prev];
               });
             }
           )
@@ -259,7 +257,7 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
 
       if (mode === "draw") {
         isDrawing.current = true;
-        const world = screenToWorld(e.clientX, e.clientY - 56); // account for toolbar
+        const world = screenToWorld(e.clientX, e.clientY - TOOLBAR_HEIGHT); // account for toolbar
         currentStroke.current = [world];
       } else {
         startPan(e.clientX, e.clientY);
@@ -277,7 +275,7 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
       }
 
       if (mode === "draw" && isDrawing.current) {
-        const world = screenToWorld(e.clientX, e.clientY - 56);
+        const world = screenToWorld(e.clientX, e.clientY - TOOLBAR_HEIGHT);
         currentStroke.current.push(world);
 
         // Live draw on canvas
@@ -318,7 +316,7 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
         // If it was a click (not a drag), show text input
         if (!hasDragged.current && mode === "write") {
           const screenX = e.clientX;
-          const screenY = e.clientY - 56; // toolbar offset
+          const screenY = e.clientY - TOOLBAR_HEIGHT; // toolbar offset
           const world = screenToWorld(screenX, screenY);
           setTextInput({
             visible: true,
@@ -419,7 +417,7 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
         ref={containerRef}
         style={{
           position: "absolute",
-          top: 56,
+          top: TOOLBAR_HEIGHT,
           left: 0,
           right: 0,
           bottom: 0,
