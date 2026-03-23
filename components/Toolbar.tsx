@@ -20,6 +20,18 @@ interface ToolbarProps {
   isConnected: boolean;
 }
 
+const MODES: { key: CanvasMode; label: string; title: string }[] = [
+  { key: "write", label: "✏️ Write", title: "Write mode: click to add text" },
+  { key: "draw",  label: "🖊️ Draw",  title: "Draw mode: drag to draw freehand" },
+  { key: "pan",   label: "🖐 Pan",   title: "Pan mode: drag to move the canvas" },
+];
+
+const MODE_HINTS: Record<CanvasMode, string> = {
+  write: "Click to write · Drag/Middle-click to pan · Scroll to zoom",
+  draw:  "Drag to draw · Space/Middle-click to pan · Scroll to zoom",
+  pan:   "Drag to pan · Scroll to zoom",
+};
+
 export default function Toolbar({
   identity,
   mode,
@@ -64,63 +76,51 @@ export default function Toolbar({
 
       {/* Mode Toggle */}
       <div style={{ display: "flex", gap: 4, background: "#1a1a1a", borderRadius: 8, padding: 3 }}>
-        <button
-          onClick={() => onModeChange("write")}
-          title="Write mode: click to add text"
-          style={{
-            background: mode === "write" ? "#6366f1" : "transparent",
-            color: mode === "write" ? "#fff" : "#888",
-            border: "none",
-            borderRadius: 6,
-            padding: "4px 12px",
-            cursor: "pointer",
-            fontSize: "0.85rem",
-            fontWeight: 600,
-            transition: "all 0.15s",
-          }}
-        >
-          ✏️ Write
-        </button>
-        <button
-          onClick={() => onModeChange("draw")}
-          title="Draw mode: drag to draw"
-          style={{
-            background: mode === "draw" ? "#6366f1" : "transparent",
-            color: mode === "draw" ? "#fff" : "#888",
-            border: "none",
-            borderRadius: 6,
-            padding: "4px 12px",
-            cursor: "pointer",
-            fontSize: "0.85rem",
-            fontWeight: 600,
-            transition: "all 0.15s",
-          }}
-        >
-          🖊️ Draw
-        </button>
-      </div>
-
-      {/* Color Palette */}
-      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-        {COLOR_PALETTE.map((color) => (
+        {MODES.map(({ key, label, title }) => (
           <button
-            key={color}
-            onClick={() => onBrushColorChange(color)}
-            title={color}
+            key={key}
+            onClick={() => onModeChange(key)}
+            title={title}
             style={{
-              width: 20,
-              height: 20,
-              borderRadius: "50%",
-              background: color,
-              border: brushColor === color ? "2px solid #fff" : "2px solid transparent",
+              background: mode === key ? "#6366f1" : "transparent",
+              color: mode === key ? "#fff" : "#888",
+              border: "none",
+              borderRadius: 6,
+              padding: "4px 12px",
               cursor: "pointer",
-              padding: 0,
-              transition: "transform 0.15s, border-color 0.15s",
-              transform: brushColor === color ? "scale(1.2)" : "scale(1)",
+              fontSize: "0.85rem",
+              fontWeight: 600,
+              transition: "all 0.15s",
             }}
-          />
+          >
+            {label}
+          </button>
         ))}
       </div>
+
+      {/* Color Palette (write + draw modes) */}
+      {mode !== "pan" && (
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          {COLOR_PALETTE.map((color) => (
+            <button
+              key={color}
+              onClick={() => onBrushColorChange(color)}
+              title={color}
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: "50%",
+                background: color,
+                border: brushColor === color ? "2px solid #fff" : "2px solid transparent",
+                cursor: "pointer",
+                padding: 0,
+                transition: "transform 0.15s, border-color 0.15s",
+                transform: brushColor === color ? "scale(1.2)" : "scale(1)",
+              }}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Brush Size (draw mode only) */}
       {mode === "draw" && (
@@ -142,7 +142,7 @@ export default function Toolbar({
 
       {/* Hint */}
       <span style={{ color: "#444", fontSize: "0.75rem", flexShrink: 0 }}>
-        {mode === "write" ? "Click to write" : "Drag to draw"} · Drag to pan · Scroll to zoom
+        {MODE_HINTS[mode]}
       </span>
 
       {/* Connection indicator */}
