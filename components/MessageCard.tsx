@@ -9,6 +9,8 @@ interface MessageCardProps {
   scale: number;
   allMessages?: Message[];
   onReply?: (message: Message) => void;
+  onNavigateTo?: (message: Message) => void;
+  isHighlighted?: boolean;
 }
 
 function relativeTime(dateStr: string): string {
@@ -28,13 +30,18 @@ export default function MessageCard({
   scale,
   allMessages,
   onReply,
+  onNavigateTo,
+  isHighlighted,
 }: MessageCardProps) {
   const fontSize = Math.min(Math.max(12 * scale, 9), 18);
   const padding = Math.max(6 * scale, 4);
 
+  // replyParent is the referenced message (or undefined if not loaded, or null if no reply_to_id)
   const replyParent = message.reply_to_id
-    ? allMessages?.find((m) => m.id === message.reply_to_id)
+    ? allMessages?.find((m) => m.id === message.reply_to_id) ?? null
     : null;
+  // True when this message references another but that message isn't available
+  const replyMissing = !!message.reply_to_id && replyParent === null && allMessages !== undefined;
 
   return (
     <div
@@ -46,26 +53,45 @@ export default function MessageCard({
         maxWidth: Math.min(280 * scale, 280),
         minWidth: Math.min(120 * scale, 120),
         background: "rgba(26, 26, 26, 0.92)",
-        border: `1px solid ${message.author_color}44`,
+        border: isHighlighted
+          ? `1px solid ${message.author_color}`
+          : `1px solid ${message.author_color}44`,
         borderRadius: Math.max(8 * scale, 6),
         padding: `${padding}px ${padding * 1.5}px`,
         backdropFilter: "blur(12px)",
-        boxShadow: `0 4px 24px rgba(0,0,0,0.5), 0 0 0 1px ${message.author_color}22`,
+        boxShadow: isHighlighted
+          ? `0 4px 24px rgba(0,0,0,0.5), 0 0 0 3px ${message.author_color}88`
+          : `0 4px 24px rgba(0,0,0,0.5), 0 0 0 1px ${message.author_color}22`,
         pointerEvents: "auto",
         cursor: "default",
         userSelect: "text",
-        zIndex: 10,
+        zIndex: isHighlighted ? 20 : 10,
+        transition: "box-shadow 0.2s ease, border-color 0.2s ease",
       }}
     >
-      {/* Reply-to excerpt */}
+      {/* Reply-to excerpt — clickable to navigate to the original message */}
       {replyParent && (
         <div
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (onNavigateTo) onNavigateTo(replyParent);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              if (onNavigateTo) onNavigateTo(replyParent);
+            }
+          }}
           style={{
             borderLeft: `2px solid ${replyParent.author_color}88`,
             paddingLeft: Math.max(4 * scale, 4),
             marginBottom: Math.max(4 * scale, 4),
             opacity: 0.7,
+            cursor: onNavigateTo ? "pointer" : "default",
           }}
+          title="Click to jump to original message"
         >
           <span
             style={{
@@ -90,6 +116,22 @@ export default function MessageCard({
             {replyParent.content.slice(0, 60)}
             {replyParent.content.length > 60 ? "…" : ""}
           </p>
+        </div>
+      )}
+
+      {/* Placeholder when referenced message is not found */}
+      {replyMissing && (
+        <div
+          style={{
+            borderLeft: "2px solid #555",
+            paddingLeft: Math.max(4 * scale, 4),
+            marginBottom: Math.max(4 * scale, 4),
+            opacity: 0.5,
+          }}
+        >
+          <span style={{ color: "#888", fontSize: Math.max(fontSize * 0.75, 8) }}>
+            ↩ Message not found
+          </span>
         </div>
       )}
 

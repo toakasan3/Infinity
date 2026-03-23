@@ -45,11 +45,13 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
     worldToScreen,
     isPanning,
     applyZoom,
+    jumpTo,
   } = useCanvas(initialX, initialY);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [brushColor, setBrushColor] = useState("#6366f1");
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [brushSize, setBrushSize] = useState(3);
   const [isConnected, setIsConnected] = useState(false);
   const [dbAvailable, setDbAvailable] = useState(true);
@@ -673,6 +675,24 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
     [worldToScreen]
   );
 
+  // Navigate to a message: pan the viewport so the message is centered, then briefly highlight it
+  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleNavigateToMessage = useCallback(
+    (msg: Message) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      jumpTo(msg.coord_x, msg.coord_y, rect.width, rect.height);
+      // Clear any existing highlight timer
+      if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
+      setHighlightedMessageId(msg.id);
+      highlightTimeoutRef.current = setTimeout(() => {
+        setHighlightedMessageId(null);
+        highlightTimeoutRef.current = null;
+      }, 2000);
+    },
+    [jumpTo]
+  );
+
   // Cursor style based on current interaction state
   const effectivePanning = isPanning.current || isTempPanning.current;
   let cursor: string;
@@ -799,6 +819,8 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
               scale={scale}
               allMessages={messages}
               onReply={handleReply}
+              onNavigateTo={handleNavigateToMessage}
+              isHighlighted={msg.id === highlightedMessageId}
             />
           );
         })}
