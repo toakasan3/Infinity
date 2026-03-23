@@ -12,6 +12,10 @@ import { Message, Stroke } from "@/types";
 import MessageCard from "./MessageCard";
 import Toolbar from "./Toolbar";
 
+function fmt(n: number): string {
+  return n.toFixed(0);
+}
+
 interface InfiniteCanvasProps {
   initialX?: number;
   initialY?: number;
@@ -49,6 +53,9 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
   const [isConnected, setIsConnected] = useState(false);
   const [dbAvailable, setDbAvailable] = useState(true);
 
+  // Cursor world position for the coordinate HUD
+  const [cursorWorld, setCursorWorld] = useState<{ x: number; y: number } | null>(null);
+
   // Text input state
   const [textInput, setTextInput] = useState<{
     visible: boolean;
@@ -64,6 +71,12 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
   const isDrawing = useRef(false);
   const currentStroke = useRef<Array<{ x: number; y: number }>>([]);
 
+  // Temporary pan active (middle-click or Space+drag), overrides current mode
+  const isTempPanning = useRef(false);
+
+  // Space key held state
+  const spaceHeld = useRef(false);
+
   // Track drag distance to distinguish click from drag
   const dragStartPos = useRef({ x: 0, y: 0 });
   const hasDragged = useRef(false);
@@ -72,9 +85,11 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
   const identityRef = useRef(identity);
   const brushColorRef = useRef(brushColor);
   const brushSizeRef = useRef(brushSize);
+  const modeRef = useRef(mode);
   useEffect(() => { identityRef.current = identity; }, [identity]);
   useEffect(() => { brushColorRef.current = brushColor; }, [brushColor]);
   useEffect(() => { brushSizeRef.current = brushSize; }, [brushSize]);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
 
   // Track last-fetched world-space bounds to avoid redundant DB queries
   const fetchedBoundsRef = useRef<{
@@ -117,7 +132,9 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
         fetch(
           `/api/messages?minX=${qMinX}&maxX=${qMaxX}&minY=${qMinY}&maxY=${qMaxY}`
         ),
-        fetch(`/api/strokes?limit=300`),
+        fetch(
+          `/api/strokes?minX=${qMinX}&maxX=${qMaxX}&minY=${qMinY}&maxY=${qMaxY}&limit=300`
+        ),
       ]);
 
       if (msgRes.ok) {
@@ -291,33 +308,94 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
     }
   }, [fetchData]);
 
+  // Space key handling — enables temporary pan in any mode
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (
+        e.code === "Space" &&
+        !e.repeat &&
+        !(e.target instanceof HTMLTextAreaElement) &&
+        !(e.target instanceof HTMLInputElement)
+      ) {
+        e.preventDefault();
+        spaceHeld.current = true;
+      }
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code === "Space") {
+        spaceHeld.current = false;
+        if (isTempPanning.current) {
+          isTempPanning.current = false;
+          endPan();
+        }
+      }
+      if (e.code === "Escape") {
+        setTextInput((prev) => ({ ...prev, visible: false, value: "", replyToId: null }));
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [endPan]);
+
   // Mouse event handlers
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
+      // Middle-click: always pan regardless of mode
+      if (e.button === 1) {
+        e.preventDefault();
+        isTempPanning.current = true;
+        startPan(e.clientX, e.clientY);
+        return;
+      }
+
       if (e.button !== 0) return;
+
+      // Space+left-drag: temporary pan
+      if (spaceHeld.current) {
+        isTempPanning.current = true;
+        startPan(e.clientX, e.clientY);
+        return;
+      }
+
       dragStartPos.current = { x: e.clientX, y: e.clientY };
       hasDragged.current = false;
 
-      if (mode === "draw") {
+      const m = modeRef.current;
+      if (m === "draw") {
         isDrawing.current = true;
-        const world = screenToWorld(e.clientX, e.clientY - TOOLBAR_HEIGHT); // account for toolbar
+        const world = screenToWorld(e.clientX, e.clientY - TOOLBAR_HEIGHT);
         currentStroke.current = [world];
       } else {
+        // write or pan: drag to pan
         startPan(e.clientX, e.clientY);
       }
     },
-    [mode, screenToWorld, startPan]
+    [screenToWorld, startPan]
   );
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
+      // Update cursor world position for the coordinate HUD
+      setCursorWorld(screenToWorld(e.clientX, e.clientY - TOOLBAR_HEIGHT));
+
+      // Temporary pan (middle-click or Space+drag)
+      if (isTempPanning.current) {
+        updatePan(e.clientX, e.clientY);
+        return;
+      }
+
       const dx = e.clientX - dragStartPos.current.x;
       const dy = e.clientY - dragStartPos.current.y;
       if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
         hasDragged.current = true;
       }
 
-      if (mode === "draw" && isDrawing.current) {
+      const m = modeRef.current;
+      if (m === "draw" && isDrawing.current) {
         const world = screenToWorld(e.clientX, e.clientY - TOOLBAR_HEIGHT);
         currentStroke.current.push(world);
 
@@ -339,27 +417,38 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
             ctx.stroke();
           }
         }
-      } else if (mode === "write") {
+      } else if (m === "write" || m === "pan") {
         updatePan(e.clientX, e.clientY);
       }
     },
-    [mode, screenToWorld, worldToScreen, updatePan, scale]
+    [screenToWorld, worldToScreen, updatePan, scale]
   );
 
   const handleMouseUp = useCallback(
     (e: React.MouseEvent) => {
-      if (mode === "draw") {
+      // End temporary pan
+      if (isTempPanning.current) {
+        isTempPanning.current = false;
+        endPan();
+        return;
+      }
+
+      const m = modeRef.current;
+      if (m === "draw") {
         isDrawing.current = false;
         if (currentStroke.current.length >= 2) {
           submitStroke([...currentStroke.current]);
         }
         currentStroke.current = [];
+      } else if (m === "pan") {
+        endPan();
       } else {
+        // write mode
         endPan();
         // If it was a click (not a drag), show text input
-        if (!hasDragged.current && mode === "write") {
+        if (!hasDragged.current && e.button === 0) {
           const screenX = e.clientX;
-          const screenY = e.clientY - TOOLBAR_HEIGHT; // toolbar offset
+          const screenY = e.clientY - TOOLBAR_HEIGHT;
           const world = screenToWorld(screenX, screenY);
           setTextInput({
             visible: true,
@@ -373,11 +462,18 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
         }
       }
     },
-    [mode, endPan, screenToWorld, submitStroke]
+    [endPan, screenToWorld, submitStroke]
   );
 
   const handleMouseLeave = useCallback(() => {
-    if (mode === "draw" && isDrawing.current) {
+    setCursorWorld(null);
+    if (isTempPanning.current) {
+      isTempPanning.current = false;
+      endPan();
+      return;
+    }
+    const m = modeRef.current;
+    if (m === "draw" && isDrawing.current) {
       isDrawing.current = false;
       if (currentStroke.current.length >= 2) {
         submitStroke([...currentStroke.current]);
@@ -386,7 +482,11 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
     } else {
       endPan();
     }
-  }, [mode, endPan, submitStroke]);
+  }, [endPan, submitStroke]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+  }, []);
 
   // Wheel zoom
   useEffect(() => {
@@ -426,8 +526,8 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
         visible: true,
         worldX: msg.coord_x + 20,
         worldY: msg.coord_y + 20,
-        screenX: Math.min(screen.x + 40, window.innerWidth - 160),
-        screenY: Math.min(screen.y + TOOLBAR_HEIGHT + 40, window.innerHeight - 160),
+        screenX: Math.min(screen.x + 40, window.innerWidth - 200),
+        screenY: Math.min(screen.y + TOOLBAR_HEIGHT + 40, window.innerHeight - 200),
         value: "",
         replyToId: msg.id,
       });
@@ -435,7 +535,22 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
     [worldToScreen]
   );
 
-  const cursor = mode === "draw" ? "crosshair" : isPanning.current ? "grabbing" : "crosshair";
+  // Cursor style based on current interaction state
+  const effectivePanning = isPanning.current || isTempPanning.current;
+  let cursor: string;
+  if (effectivePanning) {
+    cursor = "grabbing";
+  } else if (mode === "pan" || spaceHeld.current) {
+    cursor = "grab";
+  } else {
+    cursor = "crosshair";
+  }
+
+  // Viewport center in world coordinates (for coordinate HUD when cursor is outside)
+  const containerEl = containerRef.current;
+  const containerWidth = containerEl ? containerEl.offsetWidth : 800;
+  const containerHeight = containerEl ? containerEl.offsetHeight : 600;
+  const centerWorld = screenToWorld(containerWidth / 2, containerHeight / 2);
 
   return (
     <div style={{ width: "100vw", height: "100vh", overflow: "hidden", background: "#0f0f0f" }}>
@@ -489,6 +604,7 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
+        onContextMenu={handleContextMenu}
       >
         {/* Canvas for strokes */}
         <canvas
@@ -584,6 +700,11 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
               backdropFilter: "blur(12px)",
             }}
           >
+            {/* Coordinate indicator in message composer */}
+            <div style={{ color: "#444", fontSize: "0.7rem", marginBottom: 4, userSelect: "none" }}>
+              📍 {fmt(textInput.worldX)}, {fmt(textInput.worldY)}
+            </div>
+
             {/* Reply-to context banner */}
             {textInput.replyToId && (() => {
               const parent = messages.find((m) => m.id === textInput.replyToId);
@@ -683,6 +804,39 @@ export default function InfiniteCanvas({ initialX = 0, initialY = 0 }: InfiniteC
           </div>
         </div>
       )}
+
+      {/* Coordinate HUD — bottom-left */}
+      <div
+        style={{
+          position: "fixed",
+          bottom: 16,
+          left: 16,
+          background: "rgba(15,15,15,0.85)",
+          border: "1px solid #2a2a2a",
+          borderRadius: 8,
+          padding: "6px 12px",
+          backdropFilter: "blur(8px)",
+          zIndex: 150,
+          userSelect: "none",
+          pointerEvents: "none",
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+        }}
+      >
+        {cursorWorld ? (
+          <span style={{ color: "#6366f1", fontSize: "0.75rem", fontFamily: "monospace" }}>
+            cursor {fmt(cursorWorld.x)}, {fmt(cursorWorld.y)}
+          </span>
+        ) : (
+          <span style={{ color: "#888", fontSize: "0.75rem", fontFamily: "monospace" }}>
+            center {fmt(centerWorld.x)}, {fmt(centerWorld.y)}
+          </span>
+        )}
+        <span style={{ color: "#555", fontSize: "0.7rem", fontFamily: "monospace" }}>
+          zoom {(scale * 100).toFixed(0)}%
+        </span>
+      </div>
     </div>
   );
 }

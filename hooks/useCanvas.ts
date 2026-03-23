@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef } from "react";
 
-export type CanvasMode = "write" | "draw";
+export type CanvasMode = "write" | "draw" | "pan";
 
 export interface CanvasState {
   offsetX: number;
@@ -39,9 +39,40 @@ export function useCanvas(initialX = 0, initialY = 0) {
 
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    setScale((prev) => Math.min(Math.max(prev * delta, 0.1), 5));
+    if (e.ctrlKey || e.metaKey) {
+      // Zoom centered on cursor
+      const rect = (e.currentTarget as HTMLElement)?.getBoundingClientRect?.();
+      const offsetX = rect ? e.clientX - rect.left : e.clientX;
+      const offsetY = rect ? e.clientY - rect.top : e.clientY;
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      setScale((prev) => {
+        const next = Math.min(Math.max(prev * delta, 0.05), 10);
+        const ratio = next / prev;
+        setOffset((o) => ({
+          x: offsetX - ratio * (offsetX - o.x),
+          y: offsetY - ratio * (offsetY - o.y),
+        }));
+        return next;
+      });
+    } else {
+      // Scroll to pan
+      setOffset((prev) => ({
+        x: prev.x - e.deltaX,
+        y: prev.y - e.deltaY,
+      }));
+    }
   }, []);
+
+  // Jump to a world coordinate (centers the viewport on it)
+  const jumpTo = useCallback(
+    (worldX: number, worldY: number, viewportWidth: number, viewportHeight: number) => {
+      setOffset({
+        x: viewportWidth / 2 - worldX * scale,
+        y: viewportHeight / 2 - worldY * scale,
+      });
+    },
+    [scale]
+  );
 
   // Convert screen coordinates to world coordinates
   const screenToWorld = useCallback(
@@ -76,6 +107,7 @@ export function useCanvas(initialX = 0, initialY = 0) {
     handleWheel,
     screenToWorld,
     worldToScreen,
+    jumpTo,
     isPanning,
   };
 }
